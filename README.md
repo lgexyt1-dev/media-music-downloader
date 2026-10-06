@@ -42,7 +42,7 @@ Projenin çalışabilmesi için sisteminizde **FFmpeg** yüklü ve çevre deği�
 
 1. **Depoyu klonlayın:**
 ```bash
-git clone https://github.com/kullanici-adiniz/media-music-downloader.git
+git clone https://github.com/lgexyt1-dev/media-music-downloader.git
 cd media-music-downloader
 
 ```
@@ -76,11 +76,11 @@ python media-downloader.py
 
 ## `.exe` Olarak Derleme
 
-Uygulamayı özel ikonuyla birlikte harici bağımlılıklar olmadan tek bir çalıştırılabilir dosya haline getirmek için PyInstaller kullanabilirsiniz:
+Python paketlerini ve özel ikonu içeren tek dosyalı Windows uygulamasını PyInstaller ile oluşturabilirsiniz. Spotify indirmeleri için `spotdl`, medya dönüştürme ve birleştirme için FFmpeg ayrıca kurulmalıdır:
 
 ```bash
-python -m PyInstaller --noconsole --onefile --clean --icon=app.ico media-downloader.py
+python -m PyInstaller --noconsole --onefile --clean --icon=app.ico --collect-all customtkinter --collect-all yt_dlp --name MediaDownloader media-downloader.py
 
 ```
 
-Derlenen uygulama `dist/` klasörü içerisinde `media-downloader.exe` adıyla oluşturulacaktır.
+Derlenen uygulama `dist/` klasörü içerisinde `MediaDownloader.exe` adıyla oluşturulacaktır. Hazır Windows sürümü de [`dist/MediaDownloader.exe`](dist/MediaDownloader.exe) yolunda bulunur. Spotify indirmeleri için `spotdl`, medya dönüştürme ve birleştirme için FFmpeg sistemde ayrıca kurulu olmalıdır; bu harici araçlar `.exe` dosyasına dahil değildir.

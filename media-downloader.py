@@ -5,6 +5,7 @@ import threading
 import os
 import subprocess
 import winsound  # İndirme bitince sesli bildirim çalmak için
+import queue
 
 # Arayüz İlk Ayarları
 ctk.set_appearance_mode("Dark")
@@ -20,6 +21,8 @@ class MediaDownloaderApp(ctk.CTk):
 
         # Varsayılan İndirme Klasörü
         self.download_path = os.path.join(os.path.expanduser("~"), "Downloads")
+        self.ui_events = queue.Queue()
+        self.download_active = False
 
         # --- Başlık ---
         self.title_label = ctk.CTkLabel(self, text="Media & Music Downloader", font=ctk.CTkFont(size=22, weight="bold"))
@@ -118,6 +121,7 @@ class MediaDownloaderApp(ctk.CTk):
             width=40
         )
         self.sound_switch.pack(side="left")
+        self.after(100, self.process_ui_events)
 
     def open_color_picker(self):
         # Sistem renk seçici pencerisini açıyoruz
@@ -158,7 +162,7 @@ class MediaDownloaderApp(ctk.CTk):
         if self.sound_var.get():
             try:
                 winsound.MessageBeep(winsound.MB_ICONASTERISK)
-            except:
+            except Exception:
                 pass
 
     def progress_hook(self, d):
@@ -172,89 +176,103 @@ class MediaDownloaderApp(ctk.CTk):
 
             if total_bytes > 0:
                 percentage = downloaded / total_bytes
-                self.progress_bar.set(percentage)
                 speed = d.get('_speed_str', '').strip()
-                self.status_label.configure(text=f"{prefix}İndiriliyor: %{int(percentage * 100)} | Hız: {speed}", text_color="#F1C40F")
+                self.ui_events.put((
+                    "progress", percentage,
+                    f"{prefix}İndiriliyor: %{int(percentage * 100)} | Hız: {speed}"
+                ))
 
         elif d['status'] == 'finished':
-            self.progress_bar.set(1.0)
-            self.status_label.configure(text="İşleniyor (FFmpeg dönüştürmesi yapılıyor)...", text_color="#3498DB")
+            self.ui_events.put((
+                "status", "İşleniyor (FFmpeg dönüştürmesi yapılıyor)...", "#3498DB"
+            ))
 
     def start_download_thread(self):
-        threading.Thread(target=self.download_media, daemon=True).start()
-
-    def download_media(self):
+        if self.download_active:
+            return
         url = self.url_entry.get().strip()
         if not url:
             self.status_label.configure(text="Lütfen geçerli bir link girin!", text_color="#E74C3C")
             return
 
+        self.download_active = True
         self.progress_bar.set(0)
         self.status_label.configure(text="İndirme başlatılıyor...", text_color="#F1C40F")
         self.download_btn.configure(state="disabled")
+        threading.Thread(
+            target=self.download_media,
+            args=(url, self.format_var.get(), self.quality_var.get(), self.download_path),
+            daemon=True
+        ).start()
 
-        # --- Spotify Kontrolü ---
-        if "spotify.com" in url.lower():
-            self.status_label.configure(text="Spotify içeriği indiriliyor...", text_color="#3498DB")
+    def process_ui_events(self):
+        while True:
             try:
-                cmd = ["spotdl", "download", url, "--output", self.download_path]
-                subprocess.run(cmd, capture_output=True, text=True, check=True)
-                self.progress_bar.set(1.0)
-                self.status_label.configure(text="Spotify İndirmesi Tamamlandı! 🎉", text_color="#2ECC71")
-                self.play_finish_sound()
-            except Exception as e:
-                self.status_label.configure(text="Spotify indirme hatası!", text_color="#E74C3C")
-                print("Spotify Hata Detayı:", e)
-            finally:
+                event = self.ui_events.get_nowait()
+            except queue.Empty:
+                break
+            if event[0] == "progress":
+                _, percentage, message = event
+                self.progress_bar.set(max(0, min(1, percentage)))
+                self.status_label.configure(text=message, text_color="#F1C40F")
+            elif event[0] == "status":
+                _, message, color = event
+                self.status_label.configure(text=message, text_color=color)
+            elif event[0] == "complete":
+                _, succeeded, message, color = event
+                self.download_active = False
                 self.download_btn.configure(state="normal")
-            return
+                if succeeded:
+                    self.progress_bar.set(1.0)
+                    self.play_finish_sound()
+                self.status_label.configure(text=message, text_color=color)
+        self.after(100, self.process_ui_events)
 
-        # --- Diğer Platformlar ---
-        fmt = self.format_var.get()
-        quality = self.quality_var.get()
-        out_template = os.path.join(self.download_path, '%(title)s.%(ext)s')
-
-        ydl_opts = {
-            'outtmpl': out_template,
-            'progress_hooks': [self.progress_hook],
-            'quiet': True,
-            'merge_output_format': 'mp4',
-            'noplaylist': False,
-        }
-
-        if fmt == "mp3":
-            ydl_opts.update({
-                'format': 'bestaudio/best',
-                'postprocessors': [{
-                    'key': 'FFmpegExtractAudio',
-                    'preferredcodec': 'mp3',
-                    'preferredquality': '192',
-                }],
-            })
-        else:
-            if quality == "1080p":
-                format_str = 'bestvideo[height<=1080]+bestaudio/best[height<=1080]/best'
-            elif quality == "720p":
-                format_str = 'bestvideo[height<=720]+bestaudio/best[height<=720]/best'
-            elif quality == "480p":
-                format_str = 'bestvideo[height<=480]+bestaudio/best[height<=480]/best'
-            elif quality == "360p":
-                format_str = 'bestvideo[height<=360]+bestaudio/best[height<=360]/best'
-            else:
-                format_str = 'bestvideo+bestaudio/best'
-
-            ydl_opts.update({'format': format_str})
-
+    def download_media(self, url, fmt, quality, download_path):
         try:
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                ydl.download([url])
-            self.status_label.configure(text="İndirme Tamamlandı! 🎉", text_color="#2ECC71")
-            self.play_finish_sound()
-        except Exception as e:
-            self.status_label.configure(text="İndirme sırasında bir hata oluştu!", text_color="#E74C3C")
-            print("Hata detayı:", e)
-        finally:
-            self.download_btn.configure(state="normal")
+            os.makedirs(download_path, exist_ok=True)
+            if "spotify.com" in url.lower():
+                self.ui_events.put(("status", "Spotify içeriği indiriliyor...", "#3498DB"))
+                cmd = ["spotdl", "download", url, "--output", download_path]
+                subprocess.run(cmd, capture_output=True, text=True, check=True)
+            else:
+                out_template = os.path.join(download_path, '%(title)s.%(ext)s')
+                ydl_opts = {
+                    'outtmpl': out_template,
+                    'progress_hooks': [self.progress_hook],
+                    'quiet': True,
+                    'merge_output_format': 'mp4',
+                    'noplaylist': False,
+                }
+
+                if fmt == "mp3":
+                    ydl_opts.update({
+                        'format': 'bestaudio/best',
+                        'postprocessors': [{
+                            'key': 'FFmpegExtractAudio',
+                            'preferredcodec': 'mp3',
+                            'preferredquality': '192',
+                        }],
+                    })
+                else:
+                    height = {
+                        "1080p": 1080, "720p": 720, "480p": 480, "360p": 360
+                    }.get(quality)
+                    format_str = (
+                        f'bestvideo[height<={height}]+bestaudio/'
+                        f'best[height<={height}]/best'
+                        if height else 'bestvideo+bestaudio/best'
+                    )
+                    ydl_opts.update({'format': format_str})
+
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    ydl.download([url])
+
+            self.ui_events.put(("complete", True, "İndirme Tamamlandı! 🎉", "#2ECC71"))
+        except Exception as error:
+            detail = str(error).strip()
+            message = f"İndirme sırasında hata: {detail[:180]}" if detail else "İndirme başarısız oldu!"
+            self.ui_events.put(("complete", False, message, "#E74C3C"))
 
 if __name__ == "__main__":
     app = MediaDownloaderApp()
